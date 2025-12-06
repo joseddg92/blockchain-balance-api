@@ -98,9 +98,10 @@ async def root():
 
 
 @app.get("/btc/{address}")
-async def get_btc_balance(address: str):
+async def get_btc_balance(address: str, full: bool = False):
     """
     Get Bitcoin balance for an address using mempool.space API
+    Returns formatted balance (BTC) by default, or full JSON if full=true
     """
     try:
         async with httpx.AsyncClient() as client:
@@ -131,13 +132,19 @@ async def get_btc_balance(address: str):
             # Convert satoshi to BTC (1 BTC = 100,000,000 satoshi)
             balance_btc = balance_satoshi / 100_000_000
             
-            return {
+            full_response = {
                 "address": address,
                 "balance_satoshi": balance_satoshi,
                 "balance_btc": balance_btc,
                 "confirmed_balance_satoshi": chain_stats.get("funded_txo_sum", 0) - chain_stats.get("spent_txo_sum", 0),
                 "unconfirmed_balance_satoshi": mempool_stats.get("funded_txo_sum", 0) - mempool_stats.get("spent_txo_sum", 0)
             }
+            
+            # Return formatted balance by default, or full response if full=true
+            if full:
+                return full_response
+            else:
+                return balance_btc
             
     except httpx.HTTPError as e:
         logger.error(f"HTTP error fetching BTC balance: {e}")
@@ -148,9 +155,10 @@ async def get_btc_balance(address: str):
 
 
 @app.get("/evm/{chain_id}/native/{address}")
-async def get_evm_native_balance(chain_id: int, address: str):
+async def get_evm_native_balance(chain_id: int, address: str, full: bool = False):
     """
     Get native token (ETH, MATIC, etc.) balance for an EVM address
+    Returns formatted balance (ether) by default, or full JSON if full=true
     """
     try:
         # Validate address format
@@ -179,13 +187,19 @@ async def get_evm_native_balance(chain_id: int, address: str):
         balance_wei = w3.eth.get_balance(Web3.to_checksum_address(address))
         balance_ether = Web3.from_wei(balance_wei, "ether")
         
-        return {
+        full_response = {
             "address": address,
             "chain_id": chain_id,
             "balance_wei": str(balance_wei),
             "balance_ether": str(balance_ether),
             "rpc_url": rpc_url
         }
+        
+        # Return formatted balance by default, or full response if full=true
+        if full:
+            return full_response
+        else:
+            return str(balance_ether)
         
     except HTTPException:
         raise
@@ -198,10 +212,12 @@ async def get_evm_native_balance(chain_id: int, address: str):
 async def get_evm_erc20_balance(
     chain_id: int,
     erc20_contract_address: str,
-    address: str
+    address: str,
+    full: bool = False
 ):
     """
     Get ERC20 token balance for an EVM address
+    Returns formatted balance by default, or full JSON if full=true
     """
     try:
         # Validate address formats
@@ -277,7 +293,7 @@ async def get_evm_erc20_balance(
         except Exception:
             symbol = "UNKNOWN"
         
-        return {
+        full_response = {
             "address": address,
             "chain_id": chain_id,
             "contract_address": erc20_contract_address,
@@ -287,6 +303,12 @@ async def get_evm_erc20_balance(
             "symbol": symbol,
             "rpc_url": rpc_url
         }
+        
+        # Return formatted balance by default, or full response if full=true
+        if full:
+            return full_response
+        else:
+            return str(balance_formatted)
         
     except HTTPException:
         raise
