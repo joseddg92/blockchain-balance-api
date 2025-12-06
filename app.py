@@ -146,7 +146,7 @@ async def get_btc_balance(address: str, full: bool = False):
                 return full_response
             else:
                 # Return as string to preserve all decimal places
-                return str(balance_btc)
+                return float(balance_btc)
             
     except httpx.HTTPError as e:
         logger.error(f"HTTP error fetching BTC balance: {e}")
@@ -201,7 +201,7 @@ async def get_evm_native_balance(chain_id: int, address: str, full: bool = False
         if full:
             return full_response
         else:
-            return str(balance_ether)
+            return float(balance_ether)
         
     except HTTPException:
         raise
@@ -313,7 +313,7 @@ async def get_evm_erc20_balance(
         if full:
             return full_response
         else:
-            return str(balance_formatted)
+            return float(balance_formatted)
         
     except HTTPException:
         raise
