@@ -9,4 +9,10 @@ services:
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
+    networks:
+      - elliot_default
+
+networks:
+  elliot_default:
+    external: true
 
