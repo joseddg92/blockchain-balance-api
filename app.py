@@ -10,6 +10,7 @@ from web3 import Web3
 from typing import Optional, Dict, List, Any
 import logging
 import time
+from decimal import Decimal
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -129,13 +130,13 @@ async def get_btc_balance(address: str, full: bool = False):
             spent = chain_stats.get("spent_txo_sum", 0) + mempool_stats.get("spent_txo_sum", 0)
             balance_satoshi = funded - spent
             
-            # Convert satoshi to BTC (1 BTC = 100,000,000 satoshi)
-            balance_btc = balance_satoshi / 100_000_000
+            # Convert satoshi to BTC (1 BTC = 100,000,000 satoshi) using Decimal for precision
+            balance_btc = Decimal(balance_satoshi) / Decimal(100_000_000)
             
             full_response = {
                 "address": address,
                 "balance_satoshi": balance_satoshi,
-                "balance_btc": balance_btc,
+                "balance_btc": float(balance_btc),
                 "confirmed_balance_satoshi": chain_stats.get("funded_txo_sum", 0) - chain_stats.get("spent_txo_sum", 0),
                 "unconfirmed_balance_satoshi": mempool_stats.get("funded_txo_sum", 0) - mempool_stats.get("spent_txo_sum", 0)
             }
@@ -144,7 +145,8 @@ async def get_btc_balance(address: str, full: bool = False):
             if full:
                 return full_response
             else:
-                return balance_btc
+                # Return as string to preserve all decimal places
+                return str(balance_btc)
             
     except httpx.HTTPError as e:
         logger.error(f"HTTP error fetching BTC balance: {e}")
