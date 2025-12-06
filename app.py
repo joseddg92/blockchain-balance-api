@@ -282,16 +282,19 @@ async def get_evm_erc20_balance(
         try:
             decimals = contract.functions.decimals().call()
         except Exception:
-            decimals = 18  # Default to 18 if decimals() is not available
+            decimals = None  # Default to 18 if decimals() is not available
         
         # Calculate human-readable balance
         balance_formatted = balance_raw / (10 ** decimals)
         
         # Get token symbol if available
-        try:
-            symbol = contract.functions.symbol().call()
-        except Exception:
-            symbol = "UNKNOWN"
+        if full:
+            try:
+                symbol = contract.functions.symbol().call()
+            except Exception:
+                symbol = "UNKNOWN"
+        else:
+            symbol = None
         
         full_response = {
             "address": address,
