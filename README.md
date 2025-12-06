@@ -10,6 +10,8 @@ A REST API to query Bitcoin and EVM chain balances.
 
 ## Installation
 
+### Option 1: Local Installation
+
 1. Install Python 3.14 (or compatible version)
 
 2. Install dependencies:
@@ -17,8 +19,7 @@ A REST API to query Bitcoin and EVM chain balances.
 pip install -r requirements.txt
 ```
 
-## Running the API
-
+3. Run the API:
 ```bash
 python app.py
 ```
@@ -26,6 +27,19 @@ python app.py
 Or using uvicorn directly:
 ```bash
 uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+### Option 2: Docker
+
+1. Build and run with Docker Compose:
+```bash
+docker-compose up --build
+```
+
+Or run with Docker directly:
+```bash
+docker build -t blockchain-balance-api .
+docker run -p 8000:8000 blockchain-balance-api
 ```
 
 The API will be available at `http://localhost:8000`
@@ -37,13 +51,19 @@ The API will be available at `http://localhost:8000`
 
 ### Bitcoin Balance
 - `GET /btc/<address>` - Get Bitcoin balance for an address
+- `GET /btc/<address>?full` - Get full Bitcoin balance details
 
 **Example:**
 ```bash
 curl http://localhost:8000/btc/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
 ```
 
-**Response:**
+**Response (default):**
+```
+50.0
+```
+
+**Response (with ?full):**
 ```json
 {
   "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
@@ -56,13 +76,19 @@ curl http://localhost:8000/btc/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
 
 ### EVM Native Balance
 - `GET /evm/<chainid>/native/<address>` - Get native token balance for an EVM address
+- `GET /evm/<chainid>/native/<address>?full` - Get full native token balance details
 
 **Example:**
 ```bash
 curl http://localhost:8000/evm/1/native/0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb
 ```
 
-**Response:**
+**Response (default):**
+```
+"1.0"
+```
+
+**Response (with ?full):**
 ```json
 {
   "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
@@ -75,13 +101,19 @@ curl http://localhost:8000/evm/1/native/0x742d35Cc6634C0532925a3b844Bc9e7595f0bE
 
 ### ERC20 Token Balance
 - `GET /evm/<chainid>/erc20/<erc20-ca>/<address>` - Get ERC20 token balance
+- `GET /evm/<chainid>/erc20/<erc20-ca>/<address>?full` - Get full ERC20 token balance details
 
 **Example:**
 ```bash
 curl http://localhost:8000/evm/1/erc20/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb
 ```
 
-**Response:**
+**Response (default):**
+```
+"1.0"
+```
+
+**Response (with ?full):**
 ```json
 {
   "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
