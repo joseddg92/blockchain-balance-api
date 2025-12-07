@@ -11,6 +11,9 @@ from typing import Optional, Dict, List, Any
 import logging
 import time
 from decimal import Decimal
+import hashlib
+import json
+import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,6 +29,10 @@ app = FastAPI(
 _chainlist_cache: Optional[List[Dict[str, Any]]] = None
 _cache_timestamp: float = 0
 _cache_ttl: int = 3600  # Cache for 1 hour
+
+# Cache for API results (30 minutes TTL)
+_result_cache: Dict[str, Dict[str, Any]] = {}
+_result_cache_ttl: int = 1800  # 30 minutes in seconds
 
 
 async def _fetch_chainlist_json() -> Optional[List[Dict[str, Any]]]:
@@ -45,6 +52,43 @@ async def _fetch_chainlist_json() -> Optional[List[Dict[str, Any]]]:
     except Exception as e:
         logger.error(f"Error fetching chainlist JSON: {e}")
         return None
+
+
+def _generate_cache_key(endpoint: str, **kwargs) -> str:
+    """
+    Generate a cache key from endpoint name and parameters
+    """
+    key_data = {"endpoint": endpoint, **kwargs}
+    key_string = json.dumps(key_data, sort_keys=True)
+    return hashlib.md5(key_string.encode()).hexdigest()
+
+
+def _get_cached_result(cache_key: str) -> Optional[Any]:
+    """
+    Get cached result if it exists and is not expired
+    """
+    if cache_key in _result_cache:
+        cache_entry = _result_cache[cache_key]
+        current_time = time.time()
+        if (current_time - cache_entry["timestamp"]) < _result_cache_ttl:
+            logger.debug(f"Cache hit for key: {cache_key}")
+            return cache_entry["result"]
+        else:
+            # Cache expired, remove it
+            del _result_cache[cache_key]
+            logger.debug(f"Cache expired for key: {cache_key}")
+    return None
+
+
+def _set_cached_result(cache_key: str, result: Any):
+    """
+    Store result in cache with current timestamp
+    """
+    _result_cache[cache_key] = {
+        "result": result,
+        "timestamp": time.time()
+    }
+    logger.debug(f"Cached result for key: {cache_key}")
 
 
 async def get_chainlist_rpc(chain_id: int) -> Optional[str]:
@@ -104,6 +148,12 @@ async def get_btc_balance(address: str, full: bool = False):
     Get Bitcoin balance for an address using mempool.space API
     Returns formatted balance (BTC) by default, or full JSON if full=true
     """
+    # Check cache first
+    cache_key = _generate_cache_key("btc", address=address, full=full)
+    cached_result = _get_cached_result(cache_key)
+    if cached_result is not None:
+        return cached_result
+    
     try:
         async with httpx.AsyncClient() as client:
             # Use mempool.space API
@@ -143,10 +193,14 @@ async def get_btc_balance(address: str, full: bool = False):
             
             # Return formatted balance by default, or full response if full=true
             if full:
-                return full_response
+                result = full_response
             else:
                 # Return as string to preserve all decimal places
-                return float(balance_btc)
+                result = float(balance_btc)
+            
+            # Cache the result
+            _set_cached_result(cache_key, result)
+            return result
             
     except httpx.HTTPError as e:
         logger.error(f"HTTP error fetching BTC balance: {e}")
@@ -162,6 +216,12 @@ async def get_evm_native_balance(chain_id: int, address: str, full: bool = False
     Get native token (ETH, MATIC, etc.) balance for an EVM address
     Returns formatted balance (ether) by default, or full JSON if full=true
     """
+    # Check cache first
+    cache_key = _generate_cache_key("evm_native", chain_id=chain_id, address=address, full=full)
+    cached_result = _get_cached_result(cache_key)
+    if cached_result is not None:
+        return cached_result
+    
     try:
         # Validate address format
         if not Web3.is_address(address):
@@ -199,9 +259,13 @@ async def get_evm_native_balance(chain_id: int, address: str, full: bool = False
         
         # Return formatted balance by default, or full response if full=true
         if full:
-            return full_response
+            result = full_response
         else:
-            return float(balance_ether)
+            result = float(balance_ether)
+        
+        # Cache the result
+        _set_cached_result(cache_key, result)
+        return result
         
     except HTTPException:
         raise
@@ -221,6 +285,18 @@ async def get_evm_erc20_balance(
     Get ERC20 token balance for an EVM address
     Returns formatted balance by default, or full JSON if full=true
     """
+    # Check cache first
+    cache_key = _generate_cache_key(
+        "evm_erc20",
+        chain_id=chain_id,
+        erc20_contract_address=erc20_contract_address,
+        address=address,
+        full=full
+    )
+    cached_result = _get_cached_result(cache_key)
+    if cached_result is not None:
+        return cached_result
+    
     try:
         # Validate address formats
         if not Web3.is_address(address):
@@ -280,11 +356,27 @@ async def get_evm_erc20_balance(
         # Get balance
         balance_raw = contract.functions.balanceOf(Web3.to_checksum_address(address)).call()
         
-        # Get token decimals
-        try:
-            decimals = contract.functions.decimals().call()
-        except Exception:
-            decimals = None  # Default to 18 if decimals() is not available
+        # Get token decimals with retry logic
+        decimals = None
+        max_retries = 3
+        retry_delay = 1  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                decimals = contract.functions.decimals().call()
+                if decimals is not None:
+                    break
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1}/{max_retries} failed to get decimals: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.error(f"Failed to get decimals after {max_retries} attempts")
+        
+        # If decimals is still None after retries, default to 18
+        if decimals is None:
+            logger.warning(f"decimals() returned None for contract {erc20_contract_address}, defaulting to 18")
+            decimals = 18
         
         # Calculate human-readable balance
         balance_formatted = balance_raw / (10 ** decimals)
@@ -311,9 +403,13 @@ async def get_evm_erc20_balance(
         
         # Return formatted balance by default, or full response if full=true
         if full:
-            return full_response
+            result = full_response
         else:
-            return float(balance_formatted)
+            result = float(balance_formatted)
+        
+        # Cache the result
+        _set_cached_result(cache_key, result)
+        return result
         
     except HTTPException:
         raise
