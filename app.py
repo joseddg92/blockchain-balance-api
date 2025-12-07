@@ -30,7 +30,7 @@ _chainlist_cache: Optional[List[Dict[str, Any]]] = None
 _cache_timestamp: float = 0
 _cache_ttl: int = 3600  # Cache for 1 hour
 
-# Cache for API results (30 minutes TTL)
+# Cache for API results (30 minutes TTL) and permanent entries (ERC20 metadata)
 _result_cache: Dict[str, Dict[str, Any]] = {}
 _result_cache_ttl: int = 1800  # 30 minutes in seconds
 
@@ -66,11 +66,20 @@ def _generate_cache_key(endpoint: str, **kwargs) -> str:
 def _get_cached_result(cache_key: str) -> Optional[Any]:
     """
     Get cached result if it exists and is not expired
+    Entries with timestamp=float('inf') never expire
     """
     if cache_key in _result_cache:
         cache_entry = _result_cache[cache_key]
+        timestamp = cache_entry["timestamp"]
+        
+        # Entries with infinity timestamp never expire
+        if timestamp == float('inf'):
+            logger.debug(f"Cache hit for key: {cache_key} (permanent)")
+            return cache_entry["result"]
+        
+        # Check if regular cache entry is still valid
         current_time = time.time()
-        if (current_time - cache_entry["timestamp"]) < _result_cache_ttl:
+        if (current_time - timestamp) < _result_cache_ttl:
             logger.debug(f"Cache hit for key: {cache_key}")
             return cache_entry["result"]
         else:
@@ -80,15 +89,52 @@ def _get_cached_result(cache_key: str) -> Optional[Any]:
     return None
 
 
-def _set_cached_result(cache_key: str, result: Any):
+def _set_cached_result(cache_key: str, result: Any, ttl: float = None):
     """
     Store result in cache with current timestamp
+    If ttl=float('inf'), the entry never expires
     """
+    if ttl is None:
+        ttl = _result_cache_ttl
+    
+    # Use infinity as timestamp to indicate permanent entry
+    timestamp = float('inf') if ttl == float('inf') else time.time()
+    
     _result_cache[cache_key] = {
         "result": result,
-        "timestamp": time.time()
+        "timestamp": timestamp
     }
-    logger.debug(f"Cached result for key: {cache_key}")
+    logger.debug(f"Cached result for key: {cache_key} (permanent={ttl == float('inf')})")
+
+
+def _get_erc20_metadata_key(chain_id: int, contract_address: str) -> str:
+    """
+    Generate a cache key for ERC20 metadata (chain_id + contract_address)
+    """
+    return _generate_cache_key("erc20_metadata", chain_id=chain_id, contract_address=contract_address.lower())
+
+
+def _get_cached_erc20_metadata(chain_id: int, contract_address: str) -> Optional[Dict[str, Any]]:
+    """
+    Get cached ERC20 metadata (symbol and decimals) if it exists
+    Uses the shared cache with ttl=float('inf')
+    """
+    cache_key = _get_erc20_metadata_key(chain_id, contract_address)
+    return _get_cached_result(cache_key)
+
+
+def _set_cached_erc20_metadata(chain_id: int, contract_address: str, decimals: Optional[int], symbol: Optional[str]):
+    """
+    Store ERC20 metadata in permanent cache
+    Uses the shared cache with ttl=float('inf')
+    """
+    cache_key = _get_erc20_metadata_key(chain_id, contract_address)
+    metadata = {
+        "decimals": decimals,
+        "symbol": symbol
+    }
+    _set_cached_result(cache_key, metadata, ttl=float('inf'))
+    logger.debug(f"Cached ERC20 metadata for chain {chain_id}, contract {contract_address}")
 
 
 async def get_chainlist_rpc(chain_id: int) -> Optional[str]:
@@ -360,42 +406,51 @@ async def get_evm_erc20_balance(
             abi=erc20_abi
         )
         
+        # Check cache for ERC20 metadata first (decimals and symbol never change)
+        cached_metadata = _get_cached_erc20_metadata(chain_id, erc20_contract_address)
+        
+        if cached_metadata:
+            decimals = cached_metadata.get("decimals")
+            symbol = cached_metadata.get("symbol") if full else None
+        else:
+            # Get token decimals with retry logic
+            decimals = None
+            max_retries = 3
+            retry_delay = 1  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    decimals = contract.functions.decimals().call()
+                    if decimals is not None:
+                        break
+                except Exception as e:
+                    logger.warning(f"Attempt {attempt + 1}/{max_retries} failed to get decimals: {e}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        logger.error(f"Failed to get decimals after {max_retries} attempts")
+            
+            # If decimals is still None after retries, default to 18
+            if decimals is None:
+                logger.warning(f"decimals() returned None for contract {erc20_contract_address}, defaulting to 18")
+                decimals = 18
+            
+            # Get token symbol if needed
+            symbol = None
+            if full:
+                try:
+                    symbol = contract.functions.symbol().call()
+                except Exception:
+                    symbol = "UNKNOWN"
+            
+            # Cache the metadata permanently
+            _set_cached_erc20_metadata(chain_id, erc20_contract_address, decimals, symbol)
+        
         # Get balance
         balance_raw = contract.functions.balanceOf(Web3.to_checksum_address(address)).call()
         
-        # Get token decimals with retry logic
-        decimals = None
-        max_retries = 3
-        retry_delay = 1  # seconds
-        
-        for attempt in range(max_retries):
-            try:
-                decimals = contract.functions.decimals().call()
-                if decimals is not None:
-                    break
-            except Exception as e:
-                logger.warning(f"Attempt {attempt + 1}/{max_retries} failed to get decimals: {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(retry_delay)
-                else:
-                    logger.error(f"Failed to get decimals after {max_retries} attempts")
-        
-        # If decimals is still None after retries, default to 18
-        if decimals is None:
-            logger.warning(f"decimals() returned None for contract {erc20_contract_address}, defaulting to 18")
-            decimals = 18
-        
         # Calculate human-readable balance
         balance_formatted = balance_raw / (10 ** decimals)
-        
-        # Get token symbol if available
-        if full:
-            try:
-                symbol = contract.functions.symbol().call()
-            except Exception:
-                symbol = "UNKNOWN"
-        else:
-            symbol = None
         
         full_response = {
             "address": address,
