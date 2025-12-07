@@ -21,6 +21,10 @@ _cache_ttl: int = 3600  # Cache for 1 hour
 _result_cache: Dict[str, Dict[str, Any]] = {}
 _result_cache_ttl: int = 1800  # 30 minutes in seconds
 
+# Cache for Web3 clients (keyed by chain_id)
+# Stores dict with 'w3' (Web3 instance) and 'rpc_url' (string)
+_web3_cache: Dict[int, Dict[str, Any]] = {}
+
 
 async def _fetch_chainlist_json() -> Optional[List[Dict[str, Any]]]:
     """
@@ -162,6 +166,75 @@ async def get_chainlist_rpc(chain_id: int) -> Optional[str]:
     return None
 
 
+def get_cached_web3(chain_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Get cached Web3 client for a chain_id if it exists and is still connected
+    Returns dict with 'w3' and 'rpc_url' if cached and connected, None otherwise
+    """
+    if chain_id in _web3_cache:
+        cache_entry = _web3_cache[chain_id]
+        w3 = cache_entry.get('w3')
+        try:
+            # Verify connection is still active
+            if w3.is_connected():
+                logger.debug(f"Using cached Web3 client for chain {chain_id}")
+                return cache_entry
+            else:
+                # Connection lost, remove from cache
+                logger.warning(f"Cached Web3 client for chain {chain_id} lost connection, removing from cache")
+                del _web3_cache[chain_id]
+        except Exception as e:
+            # Error checking connection, remove from cache
+            logger.warning(f"Error checking cached Web3 client for chain {chain_id}: {e}, removing from cache")
+            del _web3_cache[chain_id]
+    return None
+
+
+def set_cached_web3(chain_id: int, w3: Any, rpc_url: str):
+    """
+    Cache a Web3 client for a chain_id along with its RPC URL
+    """
+    _web3_cache[chain_id] = {
+        'w3': w3,
+        'rpc_url': rpc_url
+    }
+    logger.debug(f"Cached Web3 client for chain {chain_id}")
+
+
+async def get_or_create_web3(chain_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Get or create a Web3 client for a chain_id
+    Returns dict with 'w3' (Web3 instance) and 'rpc_url' (string) if available and connected,
+    otherwise creates and caches a new one
+    """
+    from web3 import Web3
+    
+    # Try to get cached client
+    cached = get_cached_web3(chain_id)
+    if cached is not None:
+        return cached
+    
+    # Create new client
+    rpc_url = await get_chainlist_rpc(chain_id)
+    if not rpc_url:
+        return None
+    
+    w3 = Web3(Web3.HTTPProvider(rpc_url), cache_allowed_requests=True)
+    
+    # Verify connection
+    if not w3.is_connected():
+        logger.error(f"Could not connect to RPC endpoint for chain {chain_id}")
+        return None
+    
+    # Cache the client
+    set_cached_web3(chain_id, w3, rpc_url)
+    logger.info(f"Created and cached new Web3 client for chain {chain_id}")
+    return {
+        'w3': w3,
+        'rpc_url': rpc_url
+    }
+
+
 # Export cache functions for use in other modules
 __all__ = [
     '_generate_cache_key',
@@ -169,5 +242,6 @@ __all__ = [
     '_set_cached_result',
     '_get_cached_erc20_metadata',
     '_set_cached_erc20_metadata',
-    'get_chainlist_rpc'
+    'get_chainlist_rpc',
+    'get_or_create_web3'
 ]

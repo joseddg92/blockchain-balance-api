@@ -13,7 +13,7 @@ from utils import (
     _set_cached_result,
     _get_cached_erc20_metadata,
     _set_cached_erc20_metadata,
-    get_chainlist_rpc
+    get_or_create_web3
 )
 
 logger = logging.getLogger(__name__)
@@ -39,23 +39,16 @@ async def get_evm_native_balance(chain_id: int, address: str, full: bool = False
         if not Web3.is_address(address):
             raise HTTPException(status_code=400, detail="Invalid EVM address format")
         
-        # Get RPC URL from chainlist
-        rpc_url = await get_chainlist_rpc(chain_id)
-        if not rpc_url:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Could not find RPC endpoint for chain ID {chain_id}"
-            )
-        
-        # Connect to Web3
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
-        
-        # Check if connected
-        if not w3.is_connected():
+        # Get or create cached Web3 client
+        web3_info = await get_or_create_web3(chain_id)
+        if not web3_info:
             raise HTTPException(
                 status_code=503,
                 detail=f"Could not connect to RPC endpoint for chain {chain_id}"
             )
+        
+        w3 = web3_info['w3']
+        rpc_url = web3_info['rpc_url']
         
         # Get balance
         balance_wei = w3.eth.get_balance(Web3.to_checksum_address(address))
@@ -118,23 +111,16 @@ async def get_evm_erc20_balance(
         if not Web3.is_address(erc20_contract_address):
             raise HTTPException(status_code=400, detail="Invalid ERC20 contract address format")
         
-        # Get RPC URL from chainlist
-        rpc_url = await get_chainlist_rpc(chain_id)
-        if not rpc_url:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Could not find RPC endpoint for chain ID {chain_id}"
-            )
-        
-        # Connect to Web3
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
-        
-        # Check if connected
-        if not w3.is_connected():
+        # Get or create cached Web3 client
+        web3_info = await get_or_create_web3(chain_id)
+        if not web3_info:
             raise HTTPException(
                 status_code=503,
                 detail=f"Could not connect to RPC endpoint for chain {chain_id}"
             )
+        
+        w3 = web3_info['w3']
+        rpc_url = web3_info['rpc_url']
         
         # ERC20 ABI for balanceOf function
         erc20_abi = [
