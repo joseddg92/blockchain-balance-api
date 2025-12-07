@@ -132,7 +132,7 @@ async def get_chainlist_rpc(chain_id: int) -> Optional[str]:
 @app.get("/")
 async def root():
     """Root endpoint"""
-    return {
+    response = {
         "message": "Blockchain Balance API",
         "endpoints": {
             "btc": "/btc/<address>",
@@ -140,6 +140,8 @@ async def root():
             "evm_erc20": "/evm/<chainid>/erc20/<erc20-ca>/<address>"
         }
     }
+    logger.info(f"API Response [GET /]: {json.dumps(response)}")
+    return response
 
 
 @app.get("/btc/{address}")
@@ -152,6 +154,7 @@ async def get_btc_balance(address: str, full: bool = False):
     cache_key = _generate_cache_key("btc", address=address, full=full)
     cached_result = _get_cached_result(cache_key)
     if cached_result is not None:
+        logger.info(f"API Response [GET /btc/{address}?full={full}]: {json.dumps(cached_result, default=str)}")
         return cached_result
     
     try:
@@ -200,6 +203,7 @@ async def get_btc_balance(address: str, full: bool = False):
             
             # Cache the result
             _set_cached_result(cache_key, result)
+            logger.info(f"API Response [GET /btc/{address}?full={full}]: {json.dumps(result, default=str)}")
             return result
             
     except httpx.HTTPError as e:
@@ -220,6 +224,7 @@ async def get_evm_native_balance(chain_id: int, address: str, full: bool = False
     cache_key = _generate_cache_key("evm_native", chain_id=chain_id, address=address, full=full)
     cached_result = _get_cached_result(cache_key)
     if cached_result is not None:
+        logger.info(f"API Response [GET /evm/{chain_id}/native/{address}?full={full}]: {json.dumps(cached_result, default=str)}")
         return cached_result
     
     try:
@@ -265,6 +270,7 @@ async def get_evm_native_balance(chain_id: int, address: str, full: bool = False
         
         # Cache the result
         _set_cached_result(cache_key, result)
+        logger.info(f"API Response [GET /evm/{chain_id}/native/{address}?full={full}]: {json.dumps(result, default=str)}")
         return result
         
     except HTTPException:
@@ -295,6 +301,7 @@ async def get_evm_erc20_balance(
     )
     cached_result = _get_cached_result(cache_key)
     if cached_result is not None:
+        logger.info(f"API Response [GET /evm/{chain_id}/erc20/{erc20_contract_address}/{address}?full={full}]: {json.dumps(cached_result, default=str)}")
         return cached_result
     
     try:
@@ -409,6 +416,7 @@ async def get_evm_erc20_balance(
         
         # Cache the result
         _set_cached_result(cache_key, result)
+        logger.info(f"API Response [GET /evm/{chain_id}/erc20/{erc20_contract_address}/{address}?full={full}]: {json.dumps(result, default=str)}")
         return result
         
     except HTTPException:
