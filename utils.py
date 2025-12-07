@@ -219,7 +219,7 @@ async def get_or_create_web3(chain_id: int) -> Optional[Dict[str, Any]]:
     if not rpc_url:
         return None
     
-    w3 = Web3(Web3.HTTPProvider(rpc_url), cache_allowed_requests=True)
+    w3 = Web3(Web3.HTTPProvider(rpc_url, cache_allowed_requests=True))
     
     # Verify connection
     if not w3.is_connected():
